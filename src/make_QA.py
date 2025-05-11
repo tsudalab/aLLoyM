@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Tuple, Optional
 import glob
 import base64
 from io import BytesIO
-from config import element_dict
+from config import element_dict, phase_list
 from tqdm import tqdm
 
 class PhaseDataProcessor:
@@ -108,7 +108,7 @@ class PhaseDataProcessor:
         """Cleans a pandas Series by removing non-numeric characters."""
         cleaned_data = data.replace(r'[^0-9.-]', '', regex=True)
         return pd.to_numeric(cleaned_data, errors='coerce')
-
+'''
 def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Create training examples for OpenAI fine-tuning in the specified format.
@@ -209,6 +209,120 @@ def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]
     print(f"\nList of all phase names found:{unique_phase_names}")
     
     return training_examples
+'''
+
+def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Create training examples for OpenAI fine-tuning in the specified format.
+    
+    Args:
+    - processed_data (List[Dict[str, Any]]): The processed data from the PhaseDataProcessor.
+    
+    Returns:
+    - List[Dict[str, Any]]: A list of dictionaries formatted for OpenAI fine-tuning with system, user, and assistant messages.
+    """
+    training_examples = []
+    unique_phase_names = set()  # To collect all unique phase names
+    missing_elements = set()  # To track elements not found in element_dict
+    
+    # Use phase_list from config.py for special phase names
+    special_phase_names = phase_list
+    
+    for i, data_point in enumerate(processed_data):
+        # Extract relevant information
+        temperature = data_point['temperature']
+        phases = data_point['phases']
+
+        if not phases:
+            print(f"Warning: No phases found for data point {i}")
+            continue
+            
+        elements = data_point['elements']
+        
+        # Format element composition string
+        element_composition_parts = []
+        for element, composition in elements.items():
+            element = element.strip().upper()  # Ensure element symbol is uppercase
+            if not pd.isna(composition):
+                if element not in element_dict.keys():
+                    missing_elements.add(element)
+                    print(f"Error: Element '{element}' not found in element_dict")
+                    continue
+                element_composition_parts.append(f"{element_dict.get(element)} ({composition:.1f}%)")
+        
+        if not element_composition_parts:
+            print(f"Warning: No valid elements found for data point {i}")
+            continue
+            
+        element_str = " and ".join(element_composition_parts)
+        
+        # Format phase information
+        phase_descriptions = []
+        for phase_name, phase_info in phases.items():
+            # Check if this is a special phase name that should be preserved
+            is_special_phase = phase_name in special_phase_names
+            
+            # Split by # but preserve the full phase name for special phases
+            if is_special_phase:
+                base_phase_name = phase_name
+            else:
+                base_phase_name = phase_name.split('#')[0]  # Remove after '#' only for non-special phases
+            
+            fraction = phase_info['fraction']
+            
+            # Only include phases with non-zero fractions
+            if fraction > 0:
+                # Check if the phase has elements and ratio
+                if 'elements' in phase_info and 'ratio' in phase_info and not is_special_phase:
+                    ratio = phase_info['ratio']
+                    phase_elements = []
+                    
+                    for element, count in phase_info['elements'].items():
+                        element = element.strip().upper()  # Ensure element symbol is uppercase
+                        if element not in element_dict:
+                            missing_elements.add(element)
+                            continue
+                        phase_elements.append(element_dict.get(element))
+                    
+                    phase_elements_str = " : ".join(phase_elements)
+                    phase_descriptions.append(f"{fraction:.0f}% SOLID with composition ratio {phase_elements_str} = {ratio}")
+                else:
+                    # Use the original phase name with structural designation if present
+                    phase_descriptions.append(f"{fraction:.0f}% {base_phase_name}")
+                    unique_phase_names.add(base_phase_name)
+
+        if not phase_descriptions:
+            print(f"Warning: No valid phase descriptions for data point {i}")
+            continue
+            
+        # Create the final phase description
+        phase_str = " and ".join(phase_descriptions)
+            
+        # Format user and assistant messages
+        user_message = f"What phases form when {element_str} are mixed at {temperature} K?"
+        assistant_message = phase_str
+        
+        # Create example in the OpenAI fine-tuning format
+        example = {
+            "messages": [
+                {"role": "system", "content": "You are an expert in phase diagrams, thermodynamics, and materials science, specializing in alloy systems."},
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_message}
+            ]
+        }
+        
+        training_examples.append(example)
+    
+    # Report missing elements
+    if missing_elements:
+        print(f"\nError: The following {len(missing_elements)} elements were not found in element_dict:")
+        for element in sorted(missing_elements):
+            print(f"  - {element}")
+    
+    # Print list of all phase names
+    print(f"\nList of all phase names found: {unique_phase_names}")
+    
+    return training_examples
 
 def save_file(examples: List[Dict[str, str]], output_file: str = "training_data.jsonl") -> str:
     """
@@ -229,13 +343,13 @@ def save_file(examples: List[Dict[str, str]], output_file: str = "training_data.
     return output_file
 
 
-def run_pipeline(data_directory: str, split_method="file", train_ratio=0.8, seed=42):
+def run_pipeline(data_directory: str, split_method="split_by_file", train_ratio=0.8, seed=42):
     """
     Run the full fine-tuning pipeline with flexible splitting options.
 
     Args:
         data_directory: Directory containing .dat files.
-        split_method: How to split the data - "file" (split at file level) or "random" (split individual data points)
+        split_method: How to split the data - "split_by_file" (split at file level) or "random" (split individual data points)
         train_ratio: Proportion of data to use for training (default 80%).
         seed: Random seed for reproducibility.
     """
@@ -249,7 +363,7 @@ def run_pipeline(data_directory: str, split_method="file", train_ratio=0.8, seed
         return
 
     # Different splitting approaches
-    if split_method.lower() == "file":
+    if split_method.lower() == "split_by_file":
         # Original approach: Split at file level
         print(f"Using file-level splitting (train_ratio={train_ratio})...")
         train_files, val_files = split_files(file_list, train_ratio)
@@ -456,7 +570,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Fine-tuning data pipeline")
     parser.add_argument("--data_dir", help="Directory containing .dat files", default="CPDDB_data")
-    parser.add_argument("--split", choices=["split_by_file", "split_random"], default="random", 
+    parser.add_argument("--split", choices=["split_by_file", "split_random"], default="split_by_file", 
                         help="Splitting method: 'file' (split entire files) or 'random' (split individual data points)")
     parser.add_argument("--ratio", type=float, default=0.8, 
                         help="Train/validation split ratio (default: 0.8)")
