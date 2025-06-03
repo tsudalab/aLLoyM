@@ -1,0 +1,15 @@
+# Basic
+*.pyc
+__pycache__/
+.env
+*.swp
+.DS_Store
+venvs/
+
+# Ignore everything in dataset/ except CPDDB_data.zip
+dataset/*
+!dataset/CPDDB_data.zip
+
+# Ignore .out and .log files anywhere
+*.out
+*.log
