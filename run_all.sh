@@ -5,13 +5,13 @@ set -x
 
 # Step 1: Make QA
 echo ">> Creating QA datasets..."
-#unzip dataset/CPDDB_data.zip
-#python3 src/make_QA/01_make_full_QA.py
-#python3 src/make_QA/02_make_phase_names_QA.py
-#python3 src/make_QA/03_make_reverse_QA.py
-#python3 src/make_QA/04_make_multiple_choice_QA.py
-#python3 src/make_QA/05_combine_QA.py
-#python3 src/make_QA/06_shuffle_QA.py
+unzip dataset/CPDDB_data.zip
+python3 src/make_QA/01_make_full_QA.py
+python3 src/make_QA/02_make_phase_names_QA.py
+python3 src/make_QA/03_make_reverse_QA.py
+python3 src/make_QA/04_make_multiple_choice_QA.py
+python3 src/make_QA/05_combine_QA.py
+python3 src/make_QA/06_shuffle_QA.py
 
 # Step 2: Run mistral in parallel
 echo ">> Running mistral for each split type in parallel..."
