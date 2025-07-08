@@ -8,7 +8,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Set
 import glob
 import base64
 from io import BytesIO
@@ -25,11 +25,14 @@ class PhaseDataProcessor:
         self.phases = {}
         self.phase = {}
         self.unique_phase_names = set()  # Track all phase names
+        self.system_type = None  # 'binary' or 'ternary'
+        self.num_elements = 0
     
     def load_data(self):
         """Reads the data file, processes it, and extracts relevant information."""
         df = self._load_file()
         self.temperature = self.clean_numeric_data(df['T'])
+        self._detect_system_type(df)
         self._extract_elements(df)
         self._extract_phases(df)
 
@@ -39,6 +42,19 @@ class PhaseDataProcessor:
         df.columns = df.columns.str.strip()  # Clean up column names
         df = df.drop(0).reset_index(drop=True)
         return df
+
+    def _detect_system_type(self, df):
+        """Detects whether this is a binary or ternary system based on composition columns."""
+        element_cols = [col for col in df.columns if col.startswith('x(') and col.endswith(')')]
+        self.num_elements = len(element_cols)
+        
+        if self.num_elements == 2:
+            self.system_type = 'binary'
+        elif self.num_elements == 3:
+            self.system_type = 'ternary'
+        else:
+            self.system_type = f'{self.num_elements}-component'
+            print(f"Detected {self.system_type} system with {self.num_elements} elements")
 
     def _extract_elements(self, df):
         """Extracts element compositions from the dataframe."""
@@ -141,6 +157,8 @@ class PhaseDataProcessor:
         for i in range(len(self.temperature)):
             data_point = {
                 'temperature': self.temperature.iloc[i],
+                'system_type': self.system_type,
+                'num_elements': self.num_elements,
                 'elements': {k: v.iloc[i] for k, v in self.elements.items()},
                 'phases': {}
             }
@@ -156,6 +174,10 @@ class PhaseDataProcessor:
             data_list.append(data_point)
         return data_list
 
+    def get_elements_in_file(self) -> Set[str]:
+        """Returns the set of elements present in this file."""
+        return set(self.elements.keys())
+
     def clean_numeric_data(self, data: pd.Series) -> pd.Series:
         """Cleans a pandas Series by removing non-numeric characters."""
         cleaned_data = data.replace(r'[^0-9.-]', '', regex=True)
@@ -165,6 +187,7 @@ class PhaseDataProcessor:
 def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Create training examples for OpenAI fine-tuning in the specified format.
+    Handles both binary and ternary systems automatically.
     
     Args:
     - processed_data (List[Dict[str, Any]]): The processed data from the PhaseDataProcessor.
@@ -175,6 +198,7 @@ def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]
     training_examples = []
     unique_phase_names = set()  # To collect all unique phase names
     missing_elements = set()  # To track elements not found in element_dict
+    system_types = set()  # Track system types encountered
     
     # Use phase_list from config.py for special phase names
     special_phase_names = phase_list
@@ -182,6 +206,10 @@ def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]
     for i, data_point in enumerate(processed_data):
         # Extract relevant information
         temperature = data_point['temperature']
+        system_type = data_point.get('system_type', 'unknown')
+        num_elements = data_point.get('num_elements', 0)
+        system_types.add(f"{system_type} ({num_elements} elements)")
+        
         phases = data_point['phases']
         if not phases:
             print(f"Warning: No phases found for data point {i}")
@@ -189,22 +217,27 @@ def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]
             
         elements = data_point['elements']
 
-        # Format element composition string
+        # Format element composition string - handles both binary and ternary
         element_composition_parts = []
+        element_names = []  # Store element names for ordering
+        
         for element, composition in elements.items():
             element = element.strip().upper()  # Ensure element symbol is uppercase
-            if not pd.isna(composition):
+            if not pd.isna(composition) and composition > 0:  # Only include elements with non-zero composition
                 if element not in element_dict:
                     missing_elements.add(element)
                     print(f"Error: Element '{element}' not found in element_dict")
                     continue
-                element_composition_parts.append(f"{element_dict.get(element)} ({composition:.1f}%)")
+                # Remove decimal formatting - use int() for whole numbers
+                composition_str = f"{composition:.0f}%" if composition == int(composition) else f"{composition:.1f}%"
+                element_composition_parts.append(f"{element_dict.get(element)} ({composition_str})")
+                element_names.append(element_dict.get(element))
       
         if not element_composition_parts:
             print(f"Warning: No valid elements found for data point {i}")
             continue
-            
-        element_str = " and ".join(element_composition_parts)
+        
+        element_str = " + ".join(element_composition_parts)
         
         # Format phase information
         phase_descriptions = []
@@ -246,23 +279,27 @@ def create_examples(processed_data: List[Dict[str, Any]]) -> List[Dict[str, Any]
             print(f"Warning: No valid phase descriptions for data point {i}")
             continue
             
-        # Create the final phase description
-        phase_str = " and ".join(phase_descriptions)
-            
-        # Format user and assistant messages
-        user_message = f"What phases form when {element_str} are mixed at {temperature} K?"
-        assistant_message = phase_str
+        # Create user message - handle singular vs plural properly
+        if len(element_composition_parts) == 1:
+            user_message = f"What phases form when {element_str} are mixed at {temperature} K?"
+        else:
+            user_message = f"What phases form when {element_str} are mixed at {temperature} K?"
+
+        assistant_message = " + ".join(phase_descriptions) + "."
         
         # Create example in the OpenAI fine-tuning format
         example = {
             "messages": [
-                {"role": "system", "content": "You are an expert in phase diagrams, thermodynamics, and materials science, specializing in alloy systems."},
+                {"role": "system", "content": f"You are an expert in phase diagrams, thermodynamics, and materials science, specializing in {system_type} alloy systems."},
                 {"role": "user", "content": user_message},
                 {"role": "assistant", "content": assistant_message}
             ]
         }
         
         training_examples.append(example)
+    
+    # Report system types encountered
+    print(f"\nSystem types processed: {sorted(system_types)}")
     
     # Report missing elements
     if missing_elements:
@@ -310,6 +347,83 @@ def split_files(file_list: List[str], train_ratio=0.8):
     random.shuffle(file_list)  # Shuffle with fixed seed
     split_idx = int(len(file_list) * train_ratio)
     return file_list[:split_idx], file_list[split_idx:]
+
+def track_elements_in_files(data_dir: str, file_list: List[str]) -> Dict[str, Set[str]]:
+    """
+    Track which elements appear in which files.
+    
+    Args:
+        data_dir: Directory containing .dat files
+        file_list: List of file names to process
+        
+    Returns:
+        Dictionary mapping file names to sets of elements
+    """
+    file_elements = {}
+    
+    for file_name in tqdm(file_list, desc="Tracking elements in files"):
+        file_path = os.path.join(data_dir, file_name)
+        try:
+            processor = PhaseDataProcessor(file_path)
+            processor.load_data()
+            file_elements[file_name] = processor.get_elements_in_file()
+        except Exception as e:
+            print(f"❌ Error processing {file_name} for element tracking: {e}")
+            file_elements[file_name] = set()
+    
+    return file_elements
+def create_element_summary(train_file_elements: Dict[str, Set[str]], val_file_elements: Dict[str, Set[str]], output_path: str):
+    """
+    Create a summary file showing element distribution across training and validation files.
+    
+    Args:
+        train_file_elements: Dictionary mapping training file names to sets of elements
+        val_file_elements: Dictionary mapping validation file names to sets of elements
+        output_path: Path to save the summary file
+    """
+    # Track all unique elements from both train and validation sets
+    all_elements = set()
+    for elements in train_file_elements.values():
+        all_elements.update(elements)
+    for elements in val_file_elements.values():
+        all_elements.update(elements)
+    
+    # Count occurrences of each element in train and validation files
+    train_element_counts = defaultdict(int)
+    val_element_counts = defaultdict(int)
+    
+    # Count files containing each element in training set
+    for file_name, elements in train_file_elements.items():
+        for element in elements:
+            train_element_counts[element] += 1
+    
+    # Count files containing each element in validation set
+    for file_name, elements in val_file_elements.items():
+        for element in elements:
+            val_element_counts[element] += 1
+    
+    # Create summary data
+    summary_data = []
+    for element in sorted(all_elements):
+        summary_data.append({
+            'element': element_dict.get(element, element),  # Use element_dict for names
+            'num_train_files': train_element_counts[element],
+            'num_val_files': val_element_counts[element],
+            'total_files': train_element_counts[element] + val_element_counts[element]
+        })
+    
+    # Save to file
+    df = pd.DataFrame(summary_data)
+    df.to_csv(output_path, index=False, sep='\t')
+    
+    print(f"✅ Element summary saved to: {output_path}")
+    print(f"📊 Summary statistics:")
+    print(f"  - Total unique elements: {len(all_elements)}")
+    print(f"  - Elements in training files: {len([e for e in all_elements if train_element_counts[e] > 0])}")
+    print(f"  - Elements in validation files: {len([e for e in all_elements if val_element_counts[e] > 0])}")
+    print(f"  - Elements only in training: {len([e for e in all_elements if train_element_counts[e] > 0 and val_element_counts[e] == 0])}")
+    print(f"  - Elements only in validation: {len([e for e in all_elements if val_element_counts[e] > 0 and train_element_counts[e] == 0])}")
+
 
 def process_dat_files(data_dir: str, file_list: List[str]) -> List[Dict[str, Any]]:
     """
@@ -374,76 +488,133 @@ def split_data_points(all_data: List[Dict[str, Any]], train_ratio=0.8) -> Tuple[
     split_idx = int(len(all_data) * train_ratio)
     return all_data[:split_idx], all_data[split_idx:]
 
-def run_pipeline(data_directory: str, split_method="split_by_file", train_ratio=0.8, seed=42):
+def analyze_system_distribution(all_data: List[Dict[str, Any]]) -> Dict[str, int]:
+    """
+    Analyze the distribution of binary vs ternary systems in the data.
+    
+    Args:
+        all_data: List of processed data points
+        
+    Returns:
+        Dictionary with system type counts
+    """
+    system_counts = defaultdict(int)
+    
+    for data_point in all_data:
+        system_type = data_point.get('system_type', 'unknown')
+        num_elements = data_point.get('num_elements', 0)
+        key = f"{system_type} ({num_elements} elements)"
+        system_counts[key] += 1
+    
+    print("\n📊 System Distribution:")
+    for system_type, count in sorted(system_counts.items()):
+        print(f"  {system_type}: {count:,} data points")
+    
+    return dict(system_counts)
+
+def run_pipeline(data_directory: str, train_ratio=0.8, seed=42):
     """
     Run the full fine-tuning pipeline with flexible splitting options.
+    Now handles both binary and ternary systems automatically and creates element summary.
 
     Args:
         data_directory: Directory containing .dat files.
-        split_method: How to split the data - "split_by_file" (split at file level) or "split_random" (split individual data points)
         train_ratio: Proportion of data to use for training (default 80%).
         seed: Random seed for reproducibility.
     """
     random.seed(seed)  # Ensure consistent shuffle across runs
-    
-    # Step 1: Get all .dat files
-    file_list = [f for f in os.listdir(data_directory) if f.endswith(".dat")]
 
-    if not file_list:
-        print("⚠️ No .dat files found in the directory. Exiting pipeline.")
-        return
+    for split_method in ["split_by_file", "split_random"]:
+        print(f"\n🔄 Running pipeline with split method: {split_method}")
+        
+        # Step 1: Get all .dat files
+        file_list = [f for f in os.listdir(data_directory) if f.endswith(".dat")]
 
-    # Different splitting approaches
-    if split_method.lower() == "split_by_file":
-        # Original approach: Split at file level
-        print(f"Using file-level splitting (train_ratio={train_ratio})...")
-        train_files, val_files = split_files(file_list, train_ratio)
-        
-        print(f"✅ Training files: {len(train_files)}")
-        print(f"✅ Validation files: {len(val_files)}")
-        
-        # Process files separately
-        print("Processing training files...")
-        train_data = process_dat_files(data_directory, train_files)
-        
-        print("Processing validation files...")
-        val_data = process_dat_files(data_directory, val_files)
-        
-    elif split_method.lower() == "split_random":
-        # New approach: Process all files first, then randomly split data points
-        print(f"Using random data-point splitting (train_ratio={train_ratio})...")
-        print("Processing all .dat files...")
-        all_data = process_all_dat_files(data_directory)
-        
-        print(f"Total data points: {len(all_data)}")
-        print("Splitting data points into training and validation sets...")
-        train_data, val_data = split_data_points(all_data, train_ratio)
-        
-    else:
-        print(f"❌ Unknown split method: {split_method}. Valid options are 'file' or 'random'.")
-        return
+        if not file_list:
+            print("⚠️ No .dat files found in the directory. Exiting pipeline.")
+            return
 
-    print(f"✅ Training data points: {len(train_data)}")
-    print(f"✅ Validation data points: {len(val_data)}")
+        print(f"Found {len(file_list)} .dat files")
 
-    # Step 4: Create training examples
-    print("Creating training examples...")
-    training_examples = create_examples(train_data)
-    validation_examples = create_examples(val_data)
+        # Different splitting approaches
+        if split_method.lower() == "split_by_file":
+            # Original approach: Split at file level
+            print(f"Using file-level splitting (train_ratio={train_ratio})...")
+            train_files, val_files = split_files(file_list, train_ratio)
+            
+            print(f"✅ Training files: {len(train_files)}")
+            print(f"✅ Validation files: {len(val_files)}")
+            
+            # Track elements in files for summary
+            print("Tracking elements in training files...")
+            train_file_elements = track_elements_in_files(data_directory, train_files)
+            print("Tracking elements in validation files...")
+            val_file_elements = track_elements_in_files(data_directory, val_files)
+            
+            # Create single element summary for both training and validation
+            os.makedirs("dataset", exist_ok=True)
+            summary_path = os.path.join("dataset", "summary.txt")
+            create_element_summary(train_file_elements, val_file_elements, summary_path)
+            
+            # Process files separately
+            print("Processing training files...")
+            train_data = process_dat_files(data_directory, train_files)
+            
+            print("Processing validation files...")
+            val_data = process_dat_files(data_directory, val_files)
+            
+            # Analyze both datasets
+            print("\n🔍 Training Data Analysis:")
+            analyze_system_distribution(train_data)
+            
+            print("\n🔍 Validation Data Analysis:")
+            analyze_system_distribution(val_data)
+            
+        elif split_method.lower() == "split_random":
+            # New approach: Process all files first, then randomly split data points
+            print(f"Using random data-point splitting (train_ratio={train_ratio})...")
 
-    # Step 5: Save training and validation data to files
-    output_dir = f"{'/'.join(data_directory.split('/')[:-1])}/raw/{split_method}"
-    os.makedirs(f"{output_dir}/training", exist_ok=True)
-    training_file_path = save_file(training_examples, f"{output_dir}/training/full.jsonl")
-    os.makedirs(f"{output_dir}/validation", exist_ok=True)
-    validation_file_path = save_file(validation_examples, f"{output_dir}/validation/full.jsonl")
+            print("Processing all .dat files...")
+            all_data = process_all_dat_files(data_directory)
+            
+            print(f"Total data points: {len(all_data):,}")
+            
+            # Analyze full dataset
+            analyze_system_distribution(all_data)
+            
+            print("Splitting data points into training and validation sets...")
+            train_data, val_data = split_data_points(all_data, train_ratio)
+            
+        else:
+            print(f"❌ Unknown split method: {split_method}. Valid options are 'split_by_file' or 'split_random'.")
+            return
 
-    print(f"✅ Training data saved to: {training_file_path}")
-    print(f"✅ Validation data saved to: {validation_file_path}")
+        print(f"✅ Training data points: {len(train_data):,}")
+        print(f"✅ Validation data points: {len(val_data):,}")
+
+        # Step 4: Create training examples
+        print("Creating training examples...")
+        training_examples = create_examples(train_data)
+        
+        print("Creating validation examples...")
+        validation_examples = create_examples(val_data)
+
+        # Step 5: Save training and validation data to files
+        output_dir = f"{'/'.join(data_directory.split('/')[:-1])}/raw/{split_method}"
+        os.makedirs(f"{output_dir}/training", exist_ok=True)
+        training_file_path = save_file(training_examples, f"{output_dir}/training/full.jsonl")
+        os.makedirs(f"{output_dir}/validation", exist_ok=True)
+        validation_file_path = save_file(validation_examples, f"{output_dir}/validation/full.jsonl")
+
+        print(f"✅ Training data saved to: {training_file_path}")
+        print(f"✅ Validation data saved to: {validation_file_path}")
+        
+        print(f"\n🎉 Pipeline completed successfully!")
+        print(f"📈 Generated {len(training_examples):,} training examples and {len(validation_examples):,} validation examples")
 
 # Example usage:
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fine-tuning data pipeline")
+    parser = argparse.ArgumentParser(description="Fine-tuning data pipeline for binary and ternary phase systems")
     parser.add_argument(
         "--data_dir", 
         help="Directory containing input files", 
@@ -457,10 +628,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    for split in ["split_by_file", "split_random"]:
-        print(f"\nRunning pipeline for split: {split}")
-        run_pipeline(
-            data_directory=args.data_dir,
-            split_method=split,
-            train_ratio=args.ratio
-        )
+    run_pipeline(
+        data_directory=args.data_dir,
+        train_ratio=args.ratio
+    )

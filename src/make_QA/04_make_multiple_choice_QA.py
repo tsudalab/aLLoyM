@@ -21,18 +21,42 @@ def load_jsonl(file_path: str) -> List[Dict[str, Any]]:
                 item = json.loads(line.strip())
                 # Extract question and answer from the messages
                 messages = item.get('messages', [])
-                user_message = next((m['content'] for m in messages if m['role'] == 'user'), None)
-                assistant_message = next((m['content'] for m in messages if m['role'] == 'assistant'), None)
-                
-                if user_message and assistant_message:
+                user_messages = []
+                assistant_message = None
+
+                for m in messages:
+                    if m['role'] == 'user':
+                        user_messages.append(m['content'])
+                    elif m['role'] == 'assistant':
+                        assistant_message = m['content']
+
+                # Handle different message patterns
+                if len(user_messages) == 1 and assistant_message:
+                    # Standard Q&A format
                     data.append({
-                        'question': user_message,
-                        'answer': assistant_message
+                        'question': user_messages[0].strip(),
+                        'answer': assistant_message.strip().rstrip('.?')
                     })
+                elif len(user_messages) == 2:
+                    # Reverse Q&A format (question in first user message, answer in second)
+                    data.append({
+                        'question': user_messages[0].strip(),
+                        'answer': user_messages[1].strip().rstrip('.?')
+                    })
+                elif len(user_messages) >= 1:
+                    # Fallback: use first user message as question
+                    # If no assistant message, skip this entry
+                    if assistant_message:
+                        data.append({
+                            'question': user_messages[0].strip(),
+                            'answer': assistant_message.strip().rstrip('.?')
+                        })
+                    
             except json.JSONDecodeError:
                 print(f"Warning: Could not parse line: {line}")
                 continue
     return data
+
 
 def extract_elements(question: str) -> List[str]:
     """Extract element names from a question"""
@@ -63,6 +87,9 @@ def group_questions_by_elements(data: List[Dict[str, str]]) -> Dict[str, List[Di
 def create_element_based_distractors(correct_answer: str, same_elements: List[str], num_distractors: int = 3) -> List[str]:
     """Create synthetic distractors based on element composition changes"""
     distractors = []
+    
+    # Clean the correct answer first
+    correct_answer = correct_answer.strip().rstrip('.?')
     
     # Extract temperature from correct answer if present
     temp_match = re.search(r'(\d+)\s*K', correct_answer)
@@ -102,6 +129,9 @@ def create_phase_name_distractors(correct_answer: str, num_distractors: int = 3,
     """Create synthetic distractors based on phase name variations"""
     distractors = []
     
+    # Clean the correct answer first
+    correct_answer = correct_answer.strip().rstrip('.?')
+    
     # Use phase names from config.py, with or without "100% " prefix
     if add_percentage:
         available_phases = [f"100% {phase}" for phase in phase_list]
@@ -133,15 +163,15 @@ def create_phase_name_distractors(correct_answer: str, num_distractors: int = 3,
 
 def create_multiple_choice_question(item: Dict[str, str], all_data: List[Dict[str, str]], file_path: str = "") -> Dict[str, Any]:
     """Create a multiple choice question with options, ensuring distractors are actually incorrect"""
-    correct_answer = item["answer"]
+    correct_answer = item["answer"].strip().rstrip('.?')  # Clean the correct answer
     question = item["question"]
     
     # Find answers from other questions but with the same elements
     same_elements = extract_elements(question)
     elements_key = "-".join(sorted(same_elements))
     
-    # Create a mapping of questions to their answers
-    question_answer_map = {q["question"]: q["answer"] for q in all_data}
+    # Create a mapping of questions to their answers (cleaned)
+    question_answer_map = {q["question"]: q["answer"].strip().rstrip('.?') for q in all_data}
     
     # Get answers from other questions (not the current one)
     other_answers = []
@@ -149,9 +179,10 @@ def create_multiple_choice_question(item: Dict[str, str], all_data: List[Dict[st
         if other_item["question"] == question:
             continue
             
-        # Check if this answer is different from the correct one
-        if other_item["answer"] != correct_answer:
-            other_answers.append(other_item["answer"])
+        # Clean the other answer and check if it's different from the correct one
+        other_answer_cleaned = other_item["answer"].strip().rstrip('.?')
+        if other_answer_cleaned != correct_answer:
+            other_answers.append(other_answer_cleaned)
     
     # Deduplicate other answers
     other_answers = list(set(other_answers))
@@ -173,9 +204,7 @@ def create_multiple_choice_question(item: Dict[str, str], all_data: List[Dict[st
         else:
             # Default fallback - determine based on content
             correct_lower = correct_answer.lower()
-            phase_keywords = ["phase", "alpha", "beta", "gamma", "delta", "cubic", "tetragonal", 
-                             "orthorhombic", "hexagonal", "structure", "solid solution", 
-                             "intermetallic", "precipitate", "eutectic", "eutectoid"]
+            phase_keywords = phase_list
             
             is_phase_question = any(keyword in correct_lower for keyword in phase_keywords)
             
@@ -187,10 +216,11 @@ def create_multiple_choice_question(item: Dict[str, str], all_data: List[Dict[st
         # Filter out any synthetic distractors that match existing answers
         valid_synthetic = []
         for distractor in synthetic_distractors:
-            if (distractor not in other_answers and 
-                distractor != correct_answer and
-                distractor not in question_answer_map.values()):
-                valid_synthetic.append(distractor)
+            distractor_cleaned = distractor.strip().rstrip('.?')
+            if (distractor_cleaned not in other_answers and 
+                distractor_cleaned != correct_answer and
+                distractor_cleaned not in question_answer_map.values()):
+                valid_synthetic.append(distractor_cleaned)
         
         other_answers.extend(valid_synthetic)
         
@@ -252,8 +282,8 @@ def process_element_group(elements_key_questions_filepath: tuple) -> List[Dict[s
     return quiz_items
 
 def generate_quiz(data: List[Dict[str, str]], file_path: str = "") -> List[Dict[str, Any]]:
-    # First, create a global mapping of questions to answers for validation
-    global_question_answer_map = {item["question"]: item["answer"] for item in data}
+    # First, create a global mapping of questions to answers for validation (cleaned)
+    global_question_answer_map = {item["question"]: item["answer"].strip().rstrip('.?') for item in data}
     
     # Group items by element combinations
     element_groups = {}
@@ -333,26 +363,3 @@ if __name__ == "__main__":
                         print(json.dumps(quiz_data[0], indent=2))
 
     import glob
-
-    # After all processing is done, combine validation jsonl files
-    print("\n>> Combining validation .jsonl files into combined.jsonl...")
-
-    for split_method in os.listdir("dataset/multi"):
-        validation_dir = f"dataset/multi/{split_method}/validation"
-        combined_path = os.path.join(validation_dir, "combined.jsonl")
-
-        # Find all .jsonl files excluding already combined ones
-        jsonl_files = glob.glob(os.path.join(validation_dir, "*.jsonl"))
-        jsonl_files = [f for f in jsonl_files if not os.path.basename(f).startswith("combined")]
-
-        if not jsonl_files:
-            print(f"[{split_method}] No JSONL files to combine in {validation_dir}")
-            continue
-
-        with open(combined_path, "w") as outfile:
-            for file in jsonl_files:
-                with open(file, "r") as infile:
-                    for line in infile:
-                        outfile.write(line)
-
-        print(f"[{split_method}] Combined {len(jsonl_files)} files into {combined_path}")

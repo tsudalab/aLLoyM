@@ -5,6 +5,7 @@ __pycache__/
 *.swp
 .DS_Store
 venvs/
+tmp/
 
 # Ignore everything in dataset/ except CPDDB_data.zip
 dataset/*
@@ -13,3 +14,7 @@ dataset/*
 # Ignore .out and .log files anywhere
 *.out
 *.log
+
+# Others
+src/gemini/
+diagrams/

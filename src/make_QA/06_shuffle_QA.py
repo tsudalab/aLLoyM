@@ -80,7 +80,7 @@ def process_split(split_name: str):
         split_name: Either 'split_by_file' or 'split_random'
     """
     val_dir = os.path.join("dataset/raw", split_name, "validation")
-    out_dir = os.path.join("dataset/raw", split_name, "shuffled_negative_control")
+    out_dir = os.path.join("dataset/raw", split_name, "shuffled_negative_control/generated")
 
     if not os.path.exists(val_dir):
         print(f"Validation directory {val_dir} does not exist.")

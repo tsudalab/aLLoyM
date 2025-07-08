@@ -74,7 +74,8 @@ element_dict = {
     "Y": "Yttrium",
     "YB": "Ytterbium",
     "ZN": "Zinc",
-    "ZR": "Zirconium"
+    "ZR": "Zirconium",
+    "LA": "Lanthanum",
 }
 
 # Mapping of raw phase names to standardized names
