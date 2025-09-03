@@ -10,9 +10,9 @@ from huggingface_hub import login
 import os
 
 # Authenticate with Hugging Face and WandB
-token = "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"
+token = "YOUR_HF_API_KEY"
 login(token)
-API_KEY = "cccf5fe11c12ee940fdc38a9ed32bc2863c0fe8b"
+API_KEY = "YOUR_WandB_API_KEY"
 #wandb.login(key=API_KEY)
 
 # Load and preprocess the JSONL dataset
