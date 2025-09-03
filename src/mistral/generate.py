@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 QA_type = sys.argv[1]
 
 # Authenticate
-login('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')
+login('YOUR_HF_API_KEY')
 
 with open("max_seq_length.txt", "r") as f:
     max_seq_length = int(f.read().strip())
