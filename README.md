@@ -2,7 +2,7 @@
 
 ## Paper
 
-**[aLLoyM: Large Language Model for Alloy Phase Diagram Reasoning](https://arxiv.org/abs/2507.22558)**
+**[aLLoyM: A large language model for alloy phase diagram prediction](https://arxiv.org/abs/2507.22558)**
 
 ---
 
