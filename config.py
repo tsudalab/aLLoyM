@@ -1,9 +1,7 @@
-# APIs
-GEMINI_API_KEY = "AIzaSyBzOPeaPGxg7sexV5zAmZg46f_1kOwmg1g"
-
 # Configuration for aLLoyM
 
 element_dict = {
+    "AC": "Actinium",
     "AG": "Silver",
     "AL": "Aluminium",
     "AS": "Arsenic", 
@@ -44,6 +42,7 @@ element_dict = {
     "NB": "Niobium",
     "ND": "Neodymium",
     "NI": "Nickel",
+    "NH": "Nihonium",
     "N": "Nitrogen",
     "NA": "Sodium",
     "O": "Oxygen",
@@ -69,6 +68,7 @@ element_dict = {
     "TM": "Thulium",
     "TI": "Titanium",
     "TL": "Thallium",
+    "U": "Uranium",
     "V": "Vanadium",
     "W": "Tungsten",
     "Y": "Yttrium",
