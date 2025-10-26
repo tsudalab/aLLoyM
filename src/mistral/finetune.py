@@ -13,6 +13,8 @@ CONFIG = {
     # =========================================================
     # Dataset and sequence length configuration
     # =========================================================
+    "jsonl_path": "../training/combined.jsonl", # Training data
+
     "max_seq_length_margin": 20,  # Additional buffer tokens added to the automatically
                                  # computed maximum sequence length. This helps avoid
                                  # truncation in slightly longer unseen examples.
@@ -138,7 +140,7 @@ def setup_env_and_seed(seed: int) -> None:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def load_tokens_from_file(path: str = "env.token") -> None:
+def load_tokens_from_file(path: str = ".env.tokens") -> None:
     """
     Load tokens (HF_TOKEN, WANDB_API_KEY, etc.) from a simple key=value file
     and inject them into os.environ.
@@ -279,7 +281,7 @@ def main(cfg):
     """
     Main fine-tuning routine:
       - Seeds and environment setup
-      - Loads tokens from env.token
+      - Loads tokens from .env.tokens
       - Logs into Hugging Face and optionally Weights & Biases
       - Loads data and computes max sequence length
       - Prepares dataset, model, LoRA adapters
@@ -289,7 +291,7 @@ def main(cfg):
     setup_env_and_seed(cfg["seed"])
 
     # 2) Load local tokens (HF_TOKEN, WANDB_API_KEY)
-    load_env_tokens("env.token")
+    load_env_tokens(".env.tokens")
 
     # 3) Hugging Face login
     hf_token = os.getenv("HF_TOKEN", "").strip()
