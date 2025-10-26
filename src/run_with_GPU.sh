@@ -18,12 +18,14 @@ shift  # Now $@ contains all the arguments to the script
 
 # --- Activate your virtual environment ---
 echo "Activating venv..."
-source ../../../../venvs/huggingface/bin/activate
+source ../.env/bin/activate
 
 # --- Dynamically select the strongest (freest) GPU ---
 export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -k2 -nr | head -n1 | cut -d',' -f1 | xargs)
 echo "Using CUDA device(s): $CUDA_VISIBLE_DEVICES"
 
-# --- Run your script ---
+# --- Run your script with timing ---
 echo "Running training script: ${SCRIPT} with args $@"
-python3 "${SCRIPT}" "$@"
+echo "Start time: $(date)"
+time python3 "${SCRIPT}" "$@"
+echo "End time: $(date)"
