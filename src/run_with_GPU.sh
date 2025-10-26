@@ -24,6 +24,10 @@ source ../../.env/bin/activate
 export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -k2 -nr | head -n1 | cut -d',' -f1 | xargs)
 echo "Using CUDA device(s): $CUDA_VISIBLE_DEVICES"
 
+set -a
+source ../.env.tokens
+set +a
+
 # --- Run your script with timing ---
 echo "Running training script: ${SCRIPT} with args $@"
 echo "Start time: $(date)"

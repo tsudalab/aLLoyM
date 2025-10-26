@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "==> [1/8] Check uv"
+echo "==> [1/9] Check uv"
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv not found. Installing uv to user space..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -61,7 +61,6 @@ detect_backend() {
 
   # CUDA detection via nvidia-smi
   if command -v nvidia-smi >/dev/null 2>&1; then
-    # Parse CUDA Version: X.Y from nvidia-smi
     local ver
     ver="$(nvidia-smi | sed -n 's/.*CUDA Version: \([0-9]\+\.[0-9]\+\).*/\1/p' | head -n1 || true)"
     case "$ver" in
@@ -70,18 +69,17 @@ detect_backend() {
       12.4*) echo "cu124"; return;;
       12.6*|12.5*) echo "cu126"; return;;
     esac
-    # Fallback: treat unknown 12.x as cu126
     if [[ "$ver" =~ ^12\. ]]; then
       echo "cu126"; return
     fi
   fi
 
-  # CPU fallback (Darwin/Windows/Linux no CUDA)
+  # CPU fallback
   echo "cpu"
 }
 
 BACKEND="$(detect_backend)"
-echo "==> [2/8] Selected backend: ${BACKEND}"
+echo "==> [2/9] Selected backend: ${BACKEND}"
 
 case "${BACKEND}" in
   cu118) TORCH_CHANNEL="https://download.pytorch.org/whl/cu118" ;;
@@ -95,7 +93,7 @@ esac
 
 echo "Using PyTorch wheels channel: ${TORCH_CHANNEL}"
 
-echo "==> [3/8] (Re)Create venv with uv"
+echo "==> [3/9] (Re)Create venv with uv"
 if [ -d "$ENV_DIR" ]; then
   echo "Found ${ENV_DIR}. Keeping it. (If you want a fresh start: rm -rf ${ENV_DIR})"
 else
@@ -108,16 +106,16 @@ echo "Python: $(python -V)"
 echo "pip   : $(pip -V)"
 echo "Using venv: ${VIRTUAL_ENV:-none}"
 
-echo "==> [4/8] Upgrade pip inside venv"
-uv pip install --upgrade pip
+echo "==> [4/9] Ensure build/runtime fundamentals (setuptools, wheel, etc.)"
+# Triton and some wheels import setuptools at runtime; missing it causes ModuleNotFoundError.
+uv pip install --upgrade pip setuptools wheel packaging ninja cmake
 
-echo "==> [5/8] Install PyTorch (+torchvision) for ${BACKEND}"
-# NOTE: torchaudio omitted by default; add if you need it.
+echo "==> [5/9] Install PyTorch (+torchvision) for ${BACKEND}"
+# NOTE: torchaudio omitted by default; add if needed.
 uv pip install --index-url "${TORCH_CHANNEL}" torch torchvision
 
-echo "==> [6/8] Install xFormers (best-effort)"
+echo "==> [6/9] Install xFormers (best-effort)"
 if [[ "${BACKEND}" == cu118 || "${BACKEND}" == cu121 || "${BACKEND}" == cu124 || "${BACKEND}" == cu126 ]]; then
-  # Try matching CUDA index first
   if [[ "${XFORMERS_USE_INDEX}" -eq 1 ]]; then
     if ! uv pip install -U xformers --index-url "${TORCH_CHANNEL}"; then
       echo "xformers (CUDA indexed) failed; trying default PyPI…"
@@ -127,14 +125,13 @@ if [[ "${BACKEND}" == cu118 || "${BACKEND}" == cu121 || "${BACKEND}" == cu124 ||
     uv pip install -U xformers || echo "xformers unavailable; continuing without it."
   fi
 else
-  # CPU/ROCm: try generic build, but don't fail the setup
   uv pip install -U xformers || echo "xformers unavailable for ${BACKEND}; continuing."
 fi
 
-echo "==> [7/8] Install NLP/FT stack"
-uv pip install transformers unsloth trl peft bitsandbytes datasets wandb
+echo "==> [7/9] Install NLP/FT stack"
+uv pip install transformers unsloth "trl==0.9.6" peft bitsandbytes datasets wandb
 
-echo "==> [8/8] Quick GPU & import sanity check"
+echo "==> [8/9] Quick GPU & import sanity check"
 python - <<'PY'
 import os, sys
 print("----- Python & packages -----")
@@ -169,7 +166,6 @@ PY
 
 echo ""
 echo "✅ Setup completed. Backend: ${BACKEND}"
-echo "👉 From now on: 'source ${ENV_DIR}/bin/activate' before running training/inference."
-echo "   Example:"
-echo "     source ${ENV_DIR}/bin/activate"
-echo "     python -c 'import torch; print(torch.cuda.is_available())'"
+echo "👉 Use:   source ${ENV_DIR}/bin/activate"
+echo "   Test:  python -c 'import torch; print(torch.cuda.is_available())'"
+echo "==> [9/9] Done."

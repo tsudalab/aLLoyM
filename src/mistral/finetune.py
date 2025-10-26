@@ -3,120 +3,66 @@
 
 """
 LoRA fine-tuning with Unsloth (Mistral-Nemo-Instruct-2407-bnb-4bit)
-Optional W&B logging.
+Compatible with TRL==0.9.6 (uses tokenizer= and TrainingArguments).
+Relies solely on already-sourced environment variables:
+  - HF_TOKEN (required to push/pull private models)
+  - WANDB_API_KEY (optional)
 """
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 CONFIG = {
-    # =========================================================
-    # Dataset and sequence length configuration
-    # =========================================================
-    "jsonl_path": "../training/combined.jsonl", # Training data
+    # ================= Dataset =================
+    "jsonl_path": "../training/combined.jsonl",
+    "max_seq_length_margin": 20,
+    "save_max_seq_path": "max_seq_length.txt",
 
-    "max_seq_length_margin": 20,  # Additional buffer tokens added to the automatically
-                                 # computed maximum sequence length. This helps avoid
-                                 # truncation in slightly longer unseen examples.
+    # ================= Model ===================
+    "base_model_name": "unsloth/Mistral-Nemo-Instruct-2407-bnb-4bit",
+    "dtype": "bfloat16",         # will auto-downgrade to float16 if bf16 unsupported
+    "load_in_4bit": True,
 
-    "save_max_seq_path": "max_seq_length.txt",  # Path to save the computed maximum sequence length.
-                                                # This allows for reproducibility in future runs.
-
-    # =========================================================
-    # Base model and tokenizer settings
-    # =========================================================
-    "base_model_name": "unsloth/Mistral-Nemo-Instruct-2407-bnb-4bit",  # Pretrained model to fine-tune.
-                                                                      # The suffix "-bnb-4bit" indicates
-                                                                      # it is a 4-bit quantized model for
-                                                                      # lower VRAM usage.
-
-    "dtype": "bfloat16",   # Data type used for model weights and computations.
-                           # Use "bfloat16" on GPUs such as A100 or H100 for numerical
-                           # stability and better speed. Use "float16" if bf16 is unsupported.
-
-    "load_in_4bit": True,  # Whether to load the model in 4-bit precision to reduce VRAM usage.
-                           # Useful for large models and smaller GPUs.
-
-    # =========================================================
-    # Prompt formatting (how each training example is constructed)
-    # =========================================================
+    # ================= Prompt ==================
     "prompt_template": (
         "### Instruction:\n{}\n\n"
         "### Input:\n{}\n\n"
         "### Output:\n{}"
     ),
-    # Defines the textual structure of each training example:
-    # - The first {} is replaced with the instruction or system message.
-    # - The second {} is replaced with the user question or input.
-    # - The third {} is replaced with the assistant’s output (the desired answer).
-    # This consistent structure helps the model learn to respond properly.
 
-    # =========================================================
-    # LoRA (Low-Rank Adaptation) fine-tuning configuration
-    # =========================================================
+    # ================= LoRA ====================
     "target_modules": [
         "q_proj", "k_proj", "v_proj", "o_proj",
         "gate_proj", "up_proj", "down_proj"
     ],
-    # List of transformer submodules where LoRA adapters will be applied.
-    # These are typically the linear projection layers inside the attention
-    # and feed-forward blocks.
+    "lora_r": 16,
+    "lora_alpha": 16,
+    "lora_dropout": 0.0,
+    "use_gradient_checkpointing": "unsloth",  # Unsloth-friendly flag
+    "use_rslora": False,
+    "loftq_config": None,
+    "random_state": 3407,
 
-    "lora_r": 16,             # Rank of the LoRA decomposition matrices.
-                              # Higher values give more trainable capacity but require more memory.
+    # ================= Train ===================
+    "bf16": True,  # toggled off automatically if unsupported
+    "group_by_length": True,
+    "per_device_train_batch_size": 16,
+    "gradient_accumulation_steps": 4,
+    "num_train_epochs": 1,
+    "warmup_steps": 1500,
+    "learning_rate": 2e-4,
+    "logging_steps": 10,
+    "optim": "adamw_8bit",
 
-    "lora_alpha": 16,         # Scaling factor that controls the update magnitude in LoRA layers.
+    # ================= Logging =================
+    "report_to": "wandb",            # "wandb" or "none"
+    "wandb_project": "aLLoyM",
+    "wandb_run_name": "finetuned_model",
 
-    "lora_dropout": 0.0,      # Dropout applied within LoRA layers to improve generalization.
-                              # Set to 0.0 to disable.
-
-    "use_gradient_checkpointing": "unsloth",  # Enables Unsloth’s memory-efficient gradient checkpointing.
-                                              # Saves VRAM at the cost of slightly longer training time.
-
-    "use_rslora": False,      # Whether to use Rank-Stabilized LoRA (a variant for dynamic rank updates).
-                              # Keep False unless specifically experimenting.
-
-    "loftq_config": None,     # Optional LoftQ quantization configuration. None disables it.
-
-    "random_state": 3407,     # Random seed for initializing LoRA layers to ensure reproducibility.
-
-    # =========================================================
-    # Training arguments (used by the Hugging Face Trainer)
-    # =========================================================
-    "bf16": True,  # Use bfloat16 precision for training. Improves performance and stability on modern GPUs.
-
-    "group_by_length": True,  # Group examples of similar lengths together to improve training efficiency
-                              # and reduce padding overhead.
-
-    "per_device_train_batch_size": 16,  # Number of samples per GPU per step.
-                                        # Adjust based on available VRAM.
-
-    "gradient_accumulation_steps": 4,   # Number of steps to accumulate gradients before each optimizer update.
-                                        # Effective batch size = batch_size * gradient_accumulation_steps.
-
-    "num_train_epochs": 1,  # Total number of epochs (full passes over the dataset).
-
-    "warmup_steps": 1500,   # Number of steps for linear learning-rate warmup from 0 to target LR.
-
-    "learning_rate": 2e-4,  # Base learning rate. LoRA fine-tuning typically uses a higher LR
-                            # than full fine-tuning since fewer parameters are being trained.
-
-    "logging_steps": 10,    # Frequency (in steps) of logging metrics such as loss and learning rate.
-
-    "optim": "adamw_8bit",  # Optimizer type. "adamw_8bit" uses bitsandbytes to reduce memory usage
-                            # compared to standard AdamW.
-
-    # =========================================================
-    # Logging and reproducibility
-    # =========================================================
-    "report_to": "wandb",      # Reporting backend. Set to "wandb" to enable Weights & Biases logging.
-                              # Set to "none" to disable all external logging.
-
-    "wandb_project": "aLLoyM",     # Name of the W&B project to which logs are sent (if enabled).
-
-    "wandb_run_name": "finetuned_model",  # Display name for the run on W&B (if enabled).
-
-    "seed": 3407,  # Global random seed for Python, NumPy, and PyTorch to ensure deterministic results.
+    # ================= Paths/Seed ==============
+    "output_dir": "outputs",
+    "save_dir_final": "outputs/final",
+    "seed": 3407,
 }
 
 # =============================================================================
@@ -132,7 +78,7 @@ from trl import SFTTrainer
 from unsloth import FastLanguageModel
 
 # =============================================================================
-# Environment setup and optional W&B
+# Utils
 # =============================================================================
 def setup_env_and_seed(seed: int) -> None:
     torch.manual_seed(seed)
@@ -140,49 +86,18 @@ def setup_env_and_seed(seed: int) -> None:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def load_tokens_from_file(path: str = ".env.tokens") -> None:
-    """
-    Load tokens (HF_TOKEN, WANDB_API_KEY, etc.) from a simple key=value file
-    and inject them into os.environ.
-    Lines starting with '#' are ignored.
-    """
-    if not os.path.isfile(path):
-        print(f"[warn] Token file '{path}' not found — skipping.")
-        return
-
-    with open(path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                print(f"[warn] Ignoring malformed line: {line}")
-                continue
-            key, value = line.split("=", 1)
-            os.environ[key.strip()] = value.strip()
-    print(f"[info] Loaded tokens from {path}")
-
-def env_login_if_available(enable_wandb: bool):
-    """Log in to HF and optionally to W&B (only if enabled and key present)."""
-    hf_token = os.getenv("HF_TOKEN", "").strip()
-    if hf_token:
-        login(hf_token)
-
-    if enable_wandb:
-        wandb_api = os.getenv("WANDB_API_KEY", "").strip()
-        if wandb_api:
-            import wandb
-            wandb.login(key=wandb_api)
-            return True
-        else:
-            print("[warn] WANDB_API_KEY not found — skipping W&B logging.")
-    return False
+def bf16_supported() -> bool:
+    if not torch.cuda.is_available():
+        return False
+    # Rough check: Ampere+ usually supports bf16
+    major, minor = torch.cuda.get_device_capability()
+    return (major >= 8)
 
 # =============================================================================
 # Dataset loading and formatting
 # =============================================================================
 def load_jsonl_messages(path: str) -> List[Dict[str, Any]]:
-    """Load a JSONL file and extract Instruction, Question, Answer fields."""
+    """Load a JSONL file with OpenAI-style messages and extract fields."""
     records = []
     with open(path, "r") as f:
         for line in f:
@@ -190,13 +105,14 @@ def load_jsonl_messages(path: str) -> List[Dict[str, Any]]:
                 continue
             data = json.loads(line)
             msgs = data.get("messages", [])
-            sys_ = next((m["content"] for m in msgs if m["role"] == "system"), "")
-            usr_ = next((m["content"] for m in msgs if m["role"] == "user"), "")
+            sys_  = next((m["content"] for m in msgs if m["role"] == "system"), "")
+            usr_  = next((m["content"] for m in msgs if m["role"] == "user"), "")
             asst_ = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
             records.append({"Instruction": sys_, "Question": usr_, "Answer": asst_})
     return records
 
-def build_prompt(instr, inp, out, template, eos): return template.format(instr, inp, out) + eos
+def build_prompt(instr, inp, out, template, eos):
+    return template.format(instr, inp, out) + eos
 
 def compute_max_seq_length(data, tok, template, eos):
     """Tokenize all samples to determine true max length."""
@@ -208,7 +124,7 @@ def compute_max_seq_length(data, tok, template, eos):
     return max(lengths) if lengths else 0
 
 def dataset_from_records(records, template, eos) -> Dataset:
-    """Map Instruction/Question/Answer into 'text' field."""
+    """Map Instruction/Question/Answer into 'text' field for SFTTrainer."""
     ds = Dataset.from_list(records)
     def _map_fn(batch):
         return {"text": [build_prompt(i, q, a, template, eos)
@@ -219,7 +135,10 @@ def dataset_from_records(records, template, eos) -> Dataset:
 # Model setup
 # =============================================================================
 def load_model_and_tokenizer(model_name, max_seq_len, dtype, load_in_4bit):
-    torch_dtype = torch.bfloat16 if dtype == "bfloat16" else torch.float16
+    # auto-fallback for dtype/bf16
+    use_bf16 = (dtype == "bfloat16") and bf16_supported()
+    torch_dtype = torch.bfloat16 if use_bf16 else torch.float16
+
     model, tok = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=max_seq_len,
@@ -229,10 +148,11 @@ def load_model_and_tokenizer(model_name, max_seq_len, dtype, load_in_4bit):
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
         tok.padding_side = "right"
+    tok.model_max_length = max_seq_len
     return model, tok
 
 def apply_lora(model, cfg, max_seq_length):
-    """Attach LoRA adapters."""
+    """Attach LoRA adapters via Unsloth."""
     return FastLanguageModel.get_peft_model(
         model,
         target_modules=cfg["target_modules"],
@@ -248,109 +168,67 @@ def apply_lora(model, cfg, max_seq_length):
     )
 
 # =============================================================================
-# Training
-# =============================================================================
-def build_trainer(model, tok, ds, max_seq_length, cfg):
-    args = TrainingArguments(
-        bf16=cfg["bf16"],
-        group_by_length=cfg["group_by_length"],
-        per_device_train_batch_size=cfg["per_device_train_batch_size"],
-        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
-        num_train_epochs=cfg["num_train_epochs"],
-        warmup_steps=cfg["warmup_steps"],
-        learning_rate=cfg["learning_rate"],
-        logging_steps=cfg["logging_steps"],
-        output_dir=cfg["output_dir"],
-        optim=cfg["optim"],
-        report_to=("wandb" if cfg["report_to"] == "wandb" else "none"),
-        seed=cfg["seed"],
-    )
-    return SFTTrainer(
-        model=model,
-        tokenizer=tok,
-        train_dataset=ds,
-        dataset_text_field="text",
-        max_seq_length=max_seq_length,
-        args=args,
-    )
-
-# =============================================================================
 # Main
 # =============================================================================
 def main(cfg):
-    """
-    Main fine-tuning routine:
-      - Seeds and environment setup
-      - Loads tokens from .env.tokens
-      - Logs into Hugging Face and optionally Weights & Biases
-      - Loads data and computes max sequence length
-      - Prepares dataset, model, LoRA adapters
-      - Trains and saves results
-    """
-    # 1) Reproducibility setup
+    # 1) Reproducibility
     setup_env_and_seed(cfg["seed"])
 
-    # 2) Load local tokens (HF_TOKEN, WANDB_API_KEY)
-    load_env_tokens(".env.tokens")
-
-    # 3) Hugging Face login
+    # 2) Hugging Face login (optional; only if token is present)
     hf_token = os.getenv("HF_TOKEN", "").strip()
     if hf_token:
         login(hf_token)
 
-    # 4) Try initializing wandb if possible, ignore all errors
-    try:
-        import wandb
-        wandb_api = os.getenv("WANDB_API_KEY", "").strip()
-        if wandb_api:
-            wandb.login(key=wandb_api)
-            wandb.init(project=cfg["wandb_project"], name=cfg["wandb_run_name"])
-            print("[info] Weights & Biases logging enabled.")
-        else:
-            print("[info] WANDB_API_KEY not found — skipping W&B logging.")
-    except Exception:
-        # If wandb is not installed or login fails, silently skip
-        pass
+    # 3) Optional W&B
+    wandb_enabled = False
+    if cfg["report_to"] == "wandb":
+        try:
+            import wandb
+            wandb_api = os.getenv("WANDB_API_KEY", "").strip()
+            if wandb_api:
+                wandb.login(key=wandb_api)
+                wandb.init(project=cfg["wandb_project"], name=cfg["wandb_run_name"])
+                wandb_enabled = True
+                print("[info] W&B logging enabled.")
+            else:
+                print("[info] WANDB_API_KEY not set — skipping W&B.")
+        except Exception as e:
+            print(f"[warn] W&B unavailable — continuing without it. ({e})")
 
-    # 5) Prepare output paths
+    # 4) Paths
     if not os.path.isfile(cfg["jsonl_path"]):
         raise FileNotFoundError(f"Dataset not found: {cfg['jsonl_path']}")
     os.makedirs(cfg["output_dir"], exist_ok=True)
     os.makedirs(cfg["save_dir_final"], exist_ok=True)
 
-    # 6) Load temporary tokenizer to get EOS token and measure sequence length
+    # 5) Temp tokenizer to compute EOS & max length
     tmp_tok = AutoTokenizer.from_pretrained(cfg["base_model_name"])
     eos_token = tmp_tok.eos_token or "</s>"
 
-    # 7) Load and parse dataset
+    # 6) Load dataset
     records = load_jsonl_messages(cfg["jsonl_path"])
 
-    # 8) Compute max sequence length (with margin)
+    # 7) Compute true max length + margin
     auto_len = compute_max_seq_length(records, tmp_tok, cfg["prompt_template"], eos_token)
     max_seq_length = auto_len + cfg["max_seq_length_margin"]
     print(f"[info] Computed max_seq_length: {auto_len} (+{cfg['max_seq_length_margin']}) → {max_seq_length}")
-
     with open(cfg["save_max_seq_path"], "w") as f:
         f.write(str(max_seq_length))
 
-    # 9) Build formatted dataset
+    # 8) Build SFT dataset
     dataset = dataset_from_records(records, cfg["prompt_template"], eos_token)
 
-    # 10) Load model and tokenizer
+    # 9) Load model + tokenizer
     model, tokenizer = load_model_and_tokenizer(
-        cfg["base_model_name"],
-        max_seq_length,
-        cfg["dtype"],
-        cfg["load_in_4bit"],
+        cfg["base_model_name"], max_seq_length, cfg["dtype"], cfg["load_in_4bit"]
     )
 
-    # 11) Apply LoRA adapters
+    # 10) Apply LoRA
     model = apply_lora(model, cfg, max_seq_length)
 
-    # 12) Build training configuration
-    training_args = TrainingArguments(
-        bf16=cfg["bf16"],
-        group_by_length=cfg["group_by_length"],
+    # 11) TrainingArguments (TRL 0.9.6 style)
+    args = TrainingArguments(
+        bf16=(cfg["bf16"] and bf16_supported()),
         per_device_train_batch_size=cfg["per_device_train_batch_size"],
         gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
         num_train_epochs=cfg["num_train_epochs"],
@@ -359,28 +237,30 @@ def main(cfg):
         logging_steps=cfg["logging_steps"],
         output_dir=cfg["output_dir"],
         optim=cfg["optim"],
-        report_to="wandb",  # Always try to report to wandb if available
+        report_to=("wandb" if wandb_enabled else "none"),
         seed=cfg["seed"],
     )
 
-    # 13) Trainer setup
+    # 12) Trainer (tokenizer=, dataset_text_field=, max_seq_length=)
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset,
         dataset_text_field="text",
         max_seq_length=max_seq_length,
-        args=training_args,
+        args=args,
+        packing=False,
+        group_by_length=cfg["group_by_length"],
     )
 
-    # 14) Train the model
+    # 13) Train
     trainer.train()
 
-    # 15) Save final adapters and tokenizer
+    # 14) Save LoRA adapters + tokenizer
     model.save_pretrained(cfg["save_dir_final"])
     tokenizer.save_pretrained(cfg["save_dir_final"])
 
-    # 16) Free CUDA memory
+    # 15) Free VRAM
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
