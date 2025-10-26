@@ -3,9 +3,11 @@
 
 """
 Evaluation / generation for LoRA fine-tuned Unsloth model
-- Mirrors the structure of your finetune script (CONFIG-first, env tokens, optional W&B)
-- Reads max_seq_length.txt
-- Logs per-sample + final accuracy to Weights & Biases (if WANDB_API_KEY is available)
+
+Changes:
+- If no arg is given, evaluate ALL *.jsonl files under CONFIG["jsonl_val_dir"].
+- Loads model/tokenizer once; loops over QA types.
+- Single optional W&B run; logs include qa_type and final_accuracy/<qa_type>.
 """
 
 # =============================================================================
@@ -14,8 +16,8 @@ Evaluation / generation for LoRA fine-tuned Unsloth model
 CONFIG = {
     # --------- I/O ----------
     "jsonl_val_dir": "../validation",          # folder that contains {QA_type}.jsonl
-    "save_results_dir": "generated",           # where to write {QA_type}.jsonl results
-    "save_max_seq_path": "max_seq_length.txt", # computed at train time
+    "save_results_dir": "generated",              # where to write {QA_type}.jsonl results
+    "save_max_seq_path": "max_seq_length.txt",    # computed at train time
 
     # --------- Model ----------
     "base_or_checkpoint": "finetuned_model/final",  # model or adapter dir to use for inference
@@ -43,14 +45,14 @@ CONFIG = {
 # =============================================================================
 # Imports
 # =============================================================================
-import os, json, sys
+import os, json, sys, glob
 from datetime import datetime
 from typing import Dict, Any, List, Tuple
 
 import torch
+from unsloth import FastLanguageModel
 from huggingface_hub import login
 from transformers import AutoTokenizer
-from unsloth import FastLanguageModel
 
 # =============================================================================
 # Utilities
@@ -80,24 +82,24 @@ def try_login_hf() -> None:
     if token:
         login(token)
 
-def maybe_init_wandb(cfg: Dict[str, Any], qa_type: str):
-    """Initialize W&B if enabled and WANDB_API_KEY exists. Returns (wandb_or_None, run_name_or_None)."""
+def maybe_init_wandb(cfg: Dict[str, Any], run_label: str):
+    """Initialize W&B if enabled and WANDB_API_KEY exists. Returns wandb_or_None."""
     if not cfg.get("enable_wandb", True):
-        return None, None
+        return None
     api = os.getenv("WANDB_API_KEY", "").strip()
     if not api:
         print("[info] WANDB_API_KEY not found — skipping W&B logging.")
-        return None, None
+        return None
     try:
         import wandb
         wandb.login(key=api)
-        run_name = f"eval-{qa_type}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        wandb.init(project=cfg["wandb_project"], name=run_name, config={"QA_type": qa_type})
+        run_name = f"eval-{run_label}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        wandb.init(project=cfg["wandb_project"], name=run_name, config={"run_label": run_label})
         print("[info] Weights & Biases logging enabled.")
-        return wandb, run_name
+        return wandb
     except Exception as e:
         print(f"[warn] Could not init W&B: {e}")
-        return None, None
+        return None
 
 def read_max_seq_length(path: str) -> int:
     if not os.path.isfile(path):
@@ -118,45 +120,50 @@ def extract_triplet(entry: Dict[str, Any]) -> Tuple[str, str, str]:
     return instruct, user_q, gold
 
 def build_prompt(template: str, instruction: str, user_q: str, out_seed: str, eos: str = "") -> str:
-    # For prompting, we normally pass an empty output seed (so model completes after "### Output:\n")
     return template.format(instruction, user_q, out_seed) + (eos or "")
 
 def extract_after_output(decoded: str) -> str:
-    """
-    Extract the model continuation after the '### Output:\n' delimiter.
-    Robust to different splits by using partition; fallback to whole string if delimiter not found.
-    """
     head, sep, tail = decoded.partition("### Output:\n")
     return tail if sep else decoded
+
+def discover_qa_types(val_dir: str) -> List[str]:
+    paths = sorted(glob.glob(os.path.join(val_dir, "*.jsonl")))
+    qa_types = [os.path.splitext(os.path.basename(p))[0] for p in paths]
+    return qa_types
 
 # =============================================================================
 # Main
 # =============================================================================
 def main():
-    # --- Args: we keep a single positional QA_type to mirror your original usage ---
-    if len(sys.argv) < 2:
-        print("Usage: python evaluate.py <QA_type>")
-        sys.exit(1)
-    QA_type = sys.argv[1]
-
     cfg = CONFIG
     setup_env_and_seed(cfg["seed"])
 
     # Env tokens + logins
     load_tokens_from_file(".env.tokens")
     try_login_hf()
-    wandb, run_name = maybe_init_wandb(cfg, QA_type)
+
+    # Determine which QA types to evaluate
+    if len(sys.argv) >= 2:
+        qa_types = [sys.argv[1]]
+        run_label = qa_types[0]
+    else:
+        qa_types = discover_qa_types(cfg["jsonl_val_dir"])
+        if not qa_types:
+            raise FileNotFoundError(f"No .jsonl files found in {cfg['jsonl_val_dir']}")
+        run_label = "multi"
+
+    # Init W&B (single run)
+    wandb = maybe_init_wandb(cfg, run_label)
 
     # Max seq length
     max_seq_length = read_max_seq_length(cfg["save_max_seq_path"])
     print(f"[info] Using max_seq_length={max_seq_length}")
 
-    # Tokenizer (for EOS & encoding)
-    # Note: we use the same id space as the model/checkpoint dir
+    # Tokenizer
     tok = AutoTokenizer.from_pretrained(cfg["base_or_checkpoint"])
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-        tok.padding_side = "right"
+    tok.padding_side = "right"
     eos_token = tok.eos_token or "</s>"
 
     # Model
@@ -169,77 +176,80 @@ def main():
     )
     FastLanguageModel.for_inference(model)
 
-    # Data
-    val_path = os.path.join(cfg["jsonl_val_dir"], f"{QA_type}.jsonl")
-    if not os.path.isfile(val_path):
-        raise FileNotFoundError(f"Validation file not found: {val_path}")
-    data = load_validation_jsonl(val_path)
-
-    # Output
-    os.makedirs(cfg["save_results_dir"], exist_ok=True)
-    out_path = os.path.join(cfg["save_results_dir"], f"{QA_type}.jsonl")
-    # overwrite each run for determinism
-    outf = open(out_path, "w", encoding="utf-8")
-
     # Device
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    total = 0
-    correct = 0
+    # Ensure output dir
+    os.makedirs(cfg["save_results_dir"], exist_ok=True)
 
-    for entry in data:
-        try:
-            instr, user_q, gold = extract_triplet(entry)
-            prompt = build_prompt(cfg["prompt_template"], instr, user_q, "", eos_token)
-            inputs = tokenizer(
-                [prompt],
-                max_length=max_seq_length,
-                truncation=True,
-                return_tensors="pt",
-            ).to(device)
-
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=cfg["max_new_tokens"],
-                use_cache=True,
-                temperature=cfg["temperature"],
-                top_p=cfg["top_p"],
-            )
-            decoded_full = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
-            pred = extract_after_output(decoded_full).strip()
-
-            ok = (pred == gold.strip())
-            total += 1
-            correct += int(ok)
-
-            rec = {
-                "user": user_q,
-                "expected_answer": gold,
-                "generated_answer": pred,
-                "correct": ok,
-            }
-            json.dump(rec, outf, ensure_ascii=False)
-            outf.write("\n")
-
-            if wandb:
-                wandb.log({
-                    "step": total,
-                    "is_correct": int(ok),
-                    "running_accuracy": (correct / total) if total else 0.0,
-                })
-
-        except Exception as e:
-            print(f"[warn] Error on entry: {e}")
+    # Evaluate each QA type
+    for QA_type in qa_types:
+        val_path = os.path.join(cfg["jsonl_val_dir"], f"{QA_type}.jsonl")
+        if not os.path.isfile(val_path):
+            print(f"[warn] Validation file not found, skipping: {val_path}")
             continue
+        data = load_validation_jsonl(val_path)
 
-    outf.close()
-    final_acc = (correct / total) if total else 0.0
+        out_path = os.path.join(cfg["save_results_dir"], f"{QA_type}.jsonl")
+        outf = open(out_path, "w", encoding="utf-8")
+
+        total = 0
+        correct = 0
+
+        for entry in data:
+            try:
+                instr, user_q, gold = extract_triplet(entry)
+                prompt = build_prompt(cfg["prompt_template"], instr, user_q, "", eos_token)
+                inputs = tokenizer(
+                    [prompt],
+                    max_length=max_seq_length,
+                    truncation=True,
+                    return_tensors="pt",
+                ).to(device)
+
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=cfg["max_new_tokens"],
+                    use_cache=True,
+                    temperature=cfg["temperature"],
+                    top_p=cfg["top_p"],
+                )
+                decoded_full = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+                pred = extract_after_output(decoded_full).strip()
+
+                ok = (pred == gold.strip())
+                total += 1
+                correct += int(ok)
+
+                rec = {
+                    "user": user_q,
+                    "expected_answer": gold,
+                    "generated_answer": pred,
+                    "correct": ok,
+                }
+                json.dump(rec, outf, ensure_ascii=False)
+                outf.write("\n")
+
+                if wandb:
+                    wandb.log({
+                        "qa_type": QA_type,
+                        "step": total,
+                        "is_correct": int(ok),
+                        "running_accuracy": (correct / total) if total else 0.0,
+                    })
+
+            except Exception as e:
+                print(f"[warn] Error on entry ({QA_type}): {e}")
+                continue
+
+        outf.close()
+        final_acc = (correct / total) if total else 0.0
+        if wandb:
+            wandb.log({f"final_accuracy/{QA_type}": final_acc, "qa_type": QA_type})
+        print(f"[done] {QA_type}: saved -> {out_path} | Final Accuracy: {final_acc:.4f}")
+
     if wandb:
-        wandb.log({"final_accuracy": final_acc})
         wandb.finish()
-
-    print(f"[done] New JSONL saved to: {out_path}")
-    print(f"[done] Final Accuracy: {final_acc:.4f}")
 
 if __name__ == "__main__":
     main()
