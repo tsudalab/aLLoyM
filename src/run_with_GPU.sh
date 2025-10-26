@@ -18,7 +18,7 @@ shift  # Now $@ contains all the arguments to the script
 
 # --- Activate your virtual environment ---
 echo "Activating venv..."
-source ../.env/bin/activate
+source ../../.env/bin/activate
 
 # --- Dynamically select the strongest (freest) GPU ---
 export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -k2 -nr | head -n1 | cut -d',' -f1 | xargs)
