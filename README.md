@@ -3,7 +3,9 @@
 ## Links
 
 Paper: [aLLoyM: A Large Language Model for Alloy Phase Diagram Prediction](https://arxiv.org/abs/2507.22558)
+
 Pretrained model: [Playingyoyo/aLLoyM](https://huggingface.co/Playingyoyo/aLLoyM/tree/main)
+
 Dataset: [Playingyoyo/aLLoyM-dataset](https://huggingface.co/datasets/Playingyoyo/aLLoyM-dataset/tree/main)
 
 ---
