@@ -25,7 +25,7 @@ export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free --format=
 echo "Using CUDA device(s): $CUDA_VISIBLE_DEVICES"
 
 set -a
-source ../.env.tokens
+source ../../.env.tokens
 set +a
 
 # --- Run your script with timing ---

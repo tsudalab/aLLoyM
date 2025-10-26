@@ -71,11 +71,11 @@ CONFIG = {
 import os, json
 from typing import List, Dict, Any
 import torch
+from unsloth import FastLanguageModel
 from datasets import Dataset
 from huggingface_hub import login
 from transformers import AutoTokenizer, TrainingArguments
 from trl import SFTTrainer
-from unsloth import FastLanguageModel
 
 # =============================================================================
 # Utils
@@ -249,9 +249,8 @@ def main(cfg):
         dataset_text_field="text",
         max_seq_length=max_seq_length,
         args=args,
-        packing=False,
-        group_by_length=cfg["group_by_length"],
     )
+
 
     # 13) Train
     trainer.train()
