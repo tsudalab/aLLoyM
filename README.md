@@ -2,33 +2,74 @@
 
 ## Paper
 
-https://arxiv.org/abs/2507.22558
+**[aLLoyM: Large Language Model for Alloy Phase Diagram Reasoning](https://arxiv.org/abs/2507.22558)**
 
-## Setup to run finetune or inference with `unsloth/Mistral-Nemo-Instruct-2407-bnb-4bit`
+---
 
-1. Needs GPU with VRAM>8GB (tested for A100 80GB).
-2. Run setup_llm_env.sh (ested for CUDA12.4) or manually install all necessary libraries.
-3. Create your Huggingface account and paste the personal token under `.env.tokens`
-4. Optional: Create your wandb account and paste the personal token under `.env.tokens` to track ...
+## Setup for Fine-tuning or Inference
 
-## Finetune & inference with your own Q&As (any kind of data) or demo data
+(using `unsloth/Mistral-Nemo-Instruct-2407-bnb-4bit`)
 
-1. `cd YOUR_PROJECT_DIR_RIGHT_UNDER_HERE # demo/ for demo data`
-2. Run finetune file like this: bash ../src/run_with_GPU.sh ../src/finetune.py and wait.
-3. Run inference file like this: bash ../src/run_with_GPU.sh ../src/generate.py and wait.
+1. **GPU Requirement**
+   Use a GPU with more than 8 GB of VRAM (tested on NVIDIA A100 80 GB).
 
-Running run_with_GPU.sh will automatically activate .env.
-To run heavy tasks, you may want to use tmux etc.
+2. **Environment Setup**
 
+   * Run `setup_llm_env.sh` (tested with CUDA 12.4), or
+   * Manually install the required Python libraries listed in the script.
 
-## Finetune & inference with your own phase diagram data
+3. **Hugging Face Authentication**
 
-1. Add your .dat data under dataset/CPDDB_data. Notes: 
-    a. Can only take in phase names from phase_list in config.py
-    b. View demo/example.dat for the format
-2. Run data processing with the single command below:
+   * Create a Hugging Face account.
+   * Paste your personal access token into `.env.tokens`.
 
-```
-chmod +x run_all.sh
-./run_all.sh
-```
+4. **Optional: Weights & Biases Tracking**
+
+   * Create a [wandb](https://wandb.ai/) account.
+   * Add your wandb token to `.env.tokens` to enable experiment tracking.
+
+---
+
+## Fine-tuning and Inference with Custom Q&A Data
+
+(or demo datasets)
+
+1. Move into your project folder (for example, the `demo/` directory):
+
+   ```bash
+   cd demo/
+   ```
+
+2. Run fine-tuning:
+
+   ```bash
+   bash ../src/run_with_GPU.sh ../src/finetune.py
+   ```
+
+3. Run inference:
+
+   ```bash
+   bash ../src/run_with_GPU.sh ../src/generate.py
+   ```
+
+`run_with_GPU.sh` automatically activates the `.env` virtual environment.
+For long runs, use `tmux` or `screen` to keep the session active.
+
+---
+
+## Fine-tuning and Inference with Phase-Diagram Data
+
+1. **Prepare Your Data**
+
+   * Place `.dat` files under `dataset/CPDDB_data/`.
+   * Requirements:
+
+     * Phase names must appear in `phase_list` in `config.py`.
+     * Data format should follow `demo/example.dat`.
+
+2. **Run the Complete Data Processing Pipeline**
+
+   ```bash
+   chmod +x run_all.sh
+   ./run_all.sh
+   ```
