@@ -60,8 +60,8 @@ CONFIG = {
     "wandb_run_name": "finetuned_model",
 
     # ================= Paths/Seed ==============
-    "output_dir": "outputs",
-    "save_dir_final": "outputs/final",
+    "output_dir": "finetuned_model",
+    "save_dir_final": "finetuned_model/final",
     "seed": 3407,
 }
 
@@ -76,6 +76,13 @@ from datasets import Dataset
 from huggingface_hub import login
 from transformers import AutoTokenizer, TrainingArguments
 from trl import SFTTrainer
+
+import os, sys, trl, transformers
+print("[debug] CWD =", os.getcwd())
+print("[debug] SCRIPT =", os.path.abspath(__file__))
+print("[debug] TRL version =", trl.__version__)
+print("[debug] Transformers version =", transformers.__version__)
+
 
 # =============================================================================
 # Utils
