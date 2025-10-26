@@ -14,56 +14,113 @@ Relies solely on already-sourced environment variables:
 # =============================================================================
 CONFIG = {
     # ================= Dataset =================
-    "jsonl_path": "../training/combined.jsonl",
-    "max_seq_length_margin": 20,
-    "save_max_seq_path": "max_seq_length.txt",
+    "jsonl_path": "../training/combined.jsonl",  
+    # Path to the dataset in JSONL format (each line = one training sample with messages or QA pairs).
+
+    "max_seq_length_margin": 20,  
+    # Extra tokens added to the computed maximum sequence length to avoid truncation on slightly longer examples.
+
+    "save_max_seq_path": "max_seq_length.txt",  
+    # Path to store the calculated maximum sequence length for reproducibility across runs.
 
     # ================= Model ===================
-    "base_model_name": "unsloth/Mistral-Nemo-Instruct-2407-bnb-4bit",
-    "dtype": "bfloat16",         # will auto-downgrade to float16 if bf16 unsupported
-    "load_in_4bit": True,
+    "base_model_name": "unsloth/Mistral-Nemo-Instruct-2407-bnb-4bit",  
+    # Name of the base model to fine-tune. The suffix "-bnb-4bit" indicates it uses 4-bit quantization to reduce VRAM usage.
+
+    "dtype": "bfloat16",  
+    # Preferred tensor precision (bfloat16). Will automatically downgrade to float16 if the hardware doesn’t support bf16.
+
+    "load_in_4bit": True,  
+    # Enables loading the model in 4-bit precision mode for efficient fine-tuning on limited VRAM GPUs.
 
     # ================= Prompt ==================
     "prompt_template": (
         "### Instruction:\n{}\n\n"
         "### Input:\n{}\n\n"
         "### Output:\n{}"
-    ),
+    ),  
+    # Defines how training data is formatted before being fed to the model.
+    # {} placeholders correspond to instruction, input, and expected output text fields.
 
     # ================= LoRA ====================
     "target_modules": [
         "q_proj", "k_proj", "v_proj", "o_proj",
         "gate_proj", "up_proj", "down_proj"
-    ],
-    "lora_r": 16,
-    "lora_alpha": 16,
-    "lora_dropout": 0.0,
-    "use_gradient_checkpointing": "unsloth",  # Unsloth-friendly flag
-    "use_rslora": False,
-    "loftq_config": None,
-    "random_state": 3407,
+    ],  
+    # Specifies which layers in the transformer architecture will receive LoRA adapters.
+    # These correspond to attention and feed-forward projection layers.
+
+    "lora_r": 16,  
+    # Rank (low-rank dimension) of the LoRA matrices — controls how much capacity LoRA adds.
+
+    "lora_alpha": 16,  
+    # Scaling factor for LoRA updates — higher values strengthen LoRA’s effect.
+
+    "lora_dropout": 0.0,  
+    # Dropout probability applied to LoRA layers — prevents overfitting (0.0 = no dropout).
+
+    "use_gradient_checkpointing": "unsloth",  
+    # Enables Unsloth’s gradient checkpointing to reduce memory consumption during backpropagation.
+
+    "use_rslora": False,  
+    # Whether to use rank-stabilized LoRA (RS-LoRA). Useful for very low-rank setups.
+
+    "loftq_config": None,  
+    # Optional configuration for LoftQ (Low-rank fine-tuning with quantization); left None if unused.
+
+    "random_state": 3407,  
+    # Random seed for reproducibility of weight initialization and data shuffling.
 
     # ================= Train ===================
-    "bf16": True,  # toggled off automatically if unsupported
-    "group_by_length": True,
-    "per_device_train_batch_size": 16,
-    "gradient_accumulation_steps": 4,
-    "num_train_epochs": 1,
-    "warmup_steps": 1500,
-    "learning_rate": 2e-4,
-    "logging_steps": 10,
-    "optim": "adamw_8bit",
+    "bf16": True,  
+    # Whether to train in bfloat16 precision (automatically disabled if unsupported).
+
+    "group_by_length": True,  
+    # Groups training samples by length to reduce padding overhead and speed up training.
+
+    "per_device_train_batch_size": 16,  
+    # Number of samples processed per GPU per forward pass.
+
+    "gradient_accumulation_steps": 4,  
+    # Number of gradient accumulation steps before performing a backward update.
+    # Effective batch size = batch_size × gradient_accumulation_steps.
+
+    "num_train_epochs": 1,  
+    # Total number of times the model will iterate over the entire training dataset.
+
+    "warmup_steps": 1500,  
+    # Number of initial steps to linearly increase the learning rate from 0 to the set value.
+
+    "learning_rate": 2e-4,  
+    # Peak learning rate used by the optimizer.
+
+    "logging_steps": 10,  
+    # Frequency (in steps) at which metrics and training progress are logged.
+
+    "optim": "adamw_8bit",  
+    # Optimizer choice: 8-bit AdamW for memory efficiency on large models.
 
     # ================= Logging =================
-    "report_to": "wandb",            # "wandb" or "none"
-    "wandb_project": "aLLoyM",
-    "wandb_run_name": "finetuned_model",
+    "report_to": "wandb",  
+    # Where to log training metrics: "wandb" (Weights & Biases) or "none" (disable logging).
+
+    "wandb_project": "aLLoyM",  
+    # Name of the Weights & Biases project to which training runs will be logged.
+
+    "wandb_run_name": "finetuned_model",  
+    # Custom name for this particular W&B run, helps distinguish between multiple experiments.
 
     # ================= Paths/Seed ==============
-    "output_dir": "finetuned_model",
-    "save_dir_final": "finetuned_model/final",
-    "seed": 3407,
+    "output_dir": "finetuned_model",  
+    # Directory to store intermediate model checkpoints and logs during training.
+
+    "save_dir_final": "finetuned_model/final",  
+    # Directory where the final merged model (with LoRA weights applied) will be saved.
+
+    "seed": 3407,  
+    # Random seed to ensure reproducibility across runs (affects data shuffling, initialization, etc.).
 }
+
 
 # =============================================================================
 # Imports
