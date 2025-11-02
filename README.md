@@ -48,13 +48,13 @@ Dataset: [Playingyoyo/aLLoyM-dataset](https://huggingface.co/datasets/Playingyoy
 
 2. Run fine-tuning:
 
-   ```bash
+   ```srun
    bash ../../src/run_with_GPU.sh ../../src/mistral/finetune.py
    ```
 
 3. Run inference:
 
-   ```bash
+   ```srun
    bash ../../src/run_with_GPU.sh ../../src/generate.py
    ```
 
