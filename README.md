@@ -38,23 +38,24 @@ Dataset: [Playingyoyo/aLLoyM-dataset](https://huggingface.co/datasets/Playingyoy
 
 (or demo datasets)
 
-1. Move into your project folder (e.g., the `demo/` directory), create a new directory `mistral/`, and move into it:
+1. Move into your project folder (e.g., the `demo/` directory), create a new directory `mistral/`, and move into it. Also make a directory for slurm logging:
 
    ```bash
    cd demo/
    mkdir mistral/
    cd mistral/
+   mkdir logs/
    ```
 
 2. Run fine-tuning:
 
-   ```srun
+   ```sbatch
    bash ../../src/run_with_GPU.sh ../../src/mistral/finetune.py
    ```
 
 3. Run inference:
 
-   ```srun
+   ```sbatch
    bash ../../src/run_with_GPU.sh ../../src/generate.py
    ```
 
